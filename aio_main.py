@@ -5,7 +5,7 @@ from aiogram.enums import ParseMode
 import aiosqlite
 import base64
 import json
-from translate import Translator
+from googletrans import Translator
 import matplotlib.pyplot as plt  # type: ignore
 import PIL  # type: ignore
 import numpy as np  # type: ignore
@@ -29,12 +29,77 @@ from aiogram.filters import Command
 import main_mo as l
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from translate import Translator
+import requests
+
+
+API_KEY = os.getenv('gpt')
+
+# URL для отправки запросов к модели
+URL = 'gpt://ajeva7v073iank62rr8g/yandexgpt-lite'
+
 
 
 
 lenguages = {'Русский 🇷🇺':'ru', 'English 🇬🇧':'en', 'Deutsch 🇩🇪':'de','Française 🇫🇷':'fr', 'Spanish 🇪🇸':'es'}
-ll = {'ru':'Русский 🇷🇺', 'en':'English 🇬🇧', 'de':'Deutsch 🇩🇪','fr':'Française 🇫🇷', 'es':'Spanish 🇪🇸'}
+llaallallaa = {'ru':'Русский 🇷🇺', 'en':'English 🇬🇧', 'de':'Deutsch 🇩🇪','fr':'Française 🇫🇷', 'es':'Spanish 🇪🇸'}
 
+dataset_dir = pathlib.Path("food-101")
+batch_size = 32
+img_width = 180
+img_height = 180
+train_ds = tf.keras.utils.image_dataset_from_directory(
+    dataset_dir,
+    validation_split=0.2,
+    subset="training",
+    seed=123,
+    image_size=(img_height, img_width),
+    batch_size=batch_size)
+
+val_ds = tf.keras.utils.image_dataset_from_directory(
+    dataset_dir,
+    validation_split=0.2,
+    subset="validation",
+    seed=123,
+    image_size=(img_height, img_width),
+    batch_size=batch_size)
+
+class_names = train_ds.class_names
+print(f"Class names: {class_names}")
+
+num_classes = len(class_names)
+model = Sequential([
+    tf.keras.layers.Rescaling(1. / 255, input_shape=(img_height, img_width, 3)),
+
+    tf.keras.layers.RandomFlip("horizontal", input_shape=(img_height, img_width, 3)),
+    tf.keras.layers.RandomRotation(0.1),
+    tf.keras.layers.RandomZoom(0.1),
+    tf.keras.layers.RandomContrast(0.2),
+
+    layers.Conv2D(16, 3, padding='same', activation='relu'),
+    layers.MaxPooling2D(),
+
+    layers.Conv2D(32, 3, padding='same', activation='relu'),
+    layers.MaxPooling2D(),
+
+    layers.Conv2D(64, 3, padding='same', activation='relu'),
+    layers.MaxPooling2D(),
+
+    layers.Dropout(0.2),
+
+    layers.Flatten(),
+    layers.Dense(128, activation='relu'),
+    layers.Dense(num_classes)
+])
+
+model.compile(
+    optimizer='adam',
+    loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=['accuracy'])
+
+model.load_weights("Foood.weights.h5")
+
+loss, acc = model.evaluate(train_ds, verbose=2)
+print("Restored model, accuracy: {:5.2f}%".format(100 * acc))
 
 
 load_dotenv()
@@ -86,6 +151,7 @@ class REG(StatesGroup):
     svo = State()
     leng = State()
     leng2 = State()
+    grams1 = State()
 
 
 
@@ -112,7 +178,7 @@ async def get_user_data(user_id: int, date: str):
 @dp.message(CommandStart())
 async def leng(message: Message, state: FSMContext):
     await state.set_state(REG.leng)
-    await message.answer(text = 'Please, chose your lenguage:', reply_markup=kb.keyboard(message.from_user.id, 'lenguage'))
+    await message.answer(text = 'Please, chose your lenguage:', reply_markup=kb.starter('lenguage'))
 
 
 @dp.message(REG.leng)
@@ -135,6 +201,8 @@ async def start(message: Message, state: FSMContext):
         reply_markup=kb.keyboard(message.from_user.id, 'startMenu')
     )
     await state.clear()
+
+
 
 
 
@@ -246,10 +314,19 @@ def calculate_calories(sex, weight, height, age, message):
         return (10 * weight) + (6.25 * height) - (5 * age) - 161
     return 0
 
-def split_message(text, max_length=4096):
-    """Разделяем текст на части не более max_length символов."""
-    return [text[i:i + max_length] for i in range(0, len(text), max_length)]
 
+
+def split_message(text, user_id):
+    a = list(text.split("\n"))
+    cursor.execute("SELECT lang FROM user_lang WHERE user_id = {}".format(user_id))
+    ll = cursor.fetchone()[0]
+    b = ''
+    for i in range(len(a)):
+        b = b + Translator().translate(a[i], dest=ll).text + '\n'
+
+
+    max_length = 4096
+    return [b[i:i + max_length] for i in range(0, len(b), max_length)]
 def is_not_none(item):
     return item is not None
 
@@ -257,20 +334,19 @@ def is_not_none(item):
 
 
 
+
 async def generate(message, zap):
-    try:
-        async with GigaChat(
-            credentials=os.getenv('GIGA'),
-            verify_ssl_certs=False) as giga:
-              pit= giga.chat(zap)
-              cursor.execute(f"SELECT l FROM user_lang WHERE user_id = {message.from_user.id}",
-                              )
-              l = cursor.fetchone()[0]
-              translator = Translator(from_lang="ru", to_lang=l)
-              return translator.translate(pit.choices[0].message.content)
-    except Exception as e:
-        print(f"Ошибка при генерации плана: {str(e)}")
-        return f"Ошибка при генерации плана: {e}"
+        try:
+            async with GigaChat(
+                    credentials=os.getenv('GIGA'),
+                    verify_ssl_certs=False) as giga:
+                pit = giga.chat(zap)
+
+                return pit.choices[0].message.content
+        except Exception as e:
+            print(f"Ошибка при генерации плана: {str(e)}")
+            return f"Ошибка при генерации плана: {e}"
+
 
 @dp.message(F.text.in_({'Добавить тренировки',"Añadir formación" ,'Add training','Ajouter une formation' , 'Ausbildung hinzufügen'}))
 async def tren(message: Message, state: FSMContext):
@@ -306,7 +382,7 @@ async def tren_len(message: Message, state: FSMContext):
     cursor.execute("SELECT SUM(user_train_cal) FROM user_training_cal WHERE date = ? AND user_id = ?",
             (datetime.datetime.now().strftime('%Y-%m-%d'), message.from_user.id))
     result = cursor.fetchone()[0]
-    await bot.send_message(message.chat.id, text=l.printer(message.from_user.id, 'TrenCalv').format(message.from_user.first_name, result),
+    await bot.send_message(message.chat.id, text=l.printer(message.from_user.id, 'TrenCal').format(result),
                      reply_markup=kb.keyboard(message.from_user.id, 'main_menu'))
 
 
@@ -319,7 +395,7 @@ async def tren_len(message: Message, state: FSMContext):
 
 
 
-@dp.message(F.text.in_({'Ввести еду за день', "Das Essen des Tages einführen" ,"Put in a day's worth of food","Introducir la comida del día" , 'Présenter les aliments du jour'}))
+@dp.message(F.text.in_({'Ввести еду за день', "Das Essen des Tages einführen" ,"Enter a day's worth of food","Introducir la comida del día" , 'Présenter les aliments du jour'}))
 async def food1(message: Message, state: FSMContext):
     await message.answer(text=l.printer(message.from_user.id, 'ChooseTheWay'), reply_markup=kb.keyboard(message.from_user.id, 'food'))
     await state.set_state(REG.food)
@@ -336,7 +412,7 @@ async def foodchoise(message: Message, state: FSMContext):
         await state.set_state(REG.food_list)
 
     if data['food'] == l.printer(message.from_user.id, 'kbfood1'):
-        await message.answer(text=l.printer(message.from_user.id, 'SendFoto'), reply_markup=types.ReplyKeyboardRemove())
+        await message.answer(text=l.printer(message.from_user.id, 'SengFoto'), reply_markup=types.ReplyKeyboardRemove())
         await state.set_state(REG.food_photo)
 
 @dp.message(REG.food_list)
@@ -346,16 +422,41 @@ async def names(message:Message, state: FSMContext):
     await state.set_state(REG.grams)
 
 
+@dp.message(REG.food_photo)
+async def handle_photo(message:Message, state: FSMContext):
+    await state.update_data(food_photo=message.photo)
+    data = await state.get_data()
+    photo = data['food_photo'][-1]
 
+    await state.clear()
+    name_a = []
+    file_info = await bot.get_file(photo.file_id)
+    downloaded_file = await bot.download_file(file_info.file_path)
+ #   downloaded_file = await bot.download_file(file_path, file_info)
+    save_path = 'photo.jpg'
+    with open(save_path, 'wb') as new_file:
+         new_file.write(downloaded_file.read())
+    await bot.send_message(message.chat.id, l.printer(message.from_user.id, 'foto'))
+    img =  tf.keras.utils.load_img("photo.jpg", target_size=(img_height, img_width))
+    img_array =  tf.keras.utils.img_to_array(img)
+    img_array =  tf.expand_dims(img_array, 0)
+    predictions = model.predict(img_array)
+    score =  tf.nn.softmax(predictions[0])
+    lol =  str(class_names[np.argmax(score)])
+    translator =  Translator(from_lang="en", to_lang="ru")
+    name_a.append(translator.translate(lol).title())
 
-@dp.message(F.text.in_({'Присоедениться к чату',"Dem Chatraum beitreten" ,"Join the chat room" ,"Rejoindre le salon de discussion" , 'Présenter les aliments du jour'}))
+    await state.set_state(REG.grams1)
+    await bot.send_message(message.chat.id, text=l.printer(message.from_user.id, 'gram'))
+    await state.update_data(food_list=name_a)
+
+@dp.message(F.text.in_({'Присоедениться к чату',"Dem Chatraum beitreten" ,"Join the chat room" ,"Rejoindre le salon de discussion" , 'Unirse a la sala de chat'}))
 async def chat(message:Message):
     await message.answer(text = 'https://t.me/+QVhMA2topDgzOWVi', reply_markup=kb.keyboard(message.from_user.id, 'main_menu'))
 
 
 @dp.message(F.text.in_({'Добавить выпитый стаканчик воды', "Añade un vaso de agua", "Ajoutez un verre d'eau potable" ,"Add a drunken glass of water" , 'Ein getrunkenes Glas Wasser hinzufügen'}))
-
-async def chat(message:Message):
+async def chating(message:Message):
     async with aiosqlite.connect('pro3.db') as conn:
         await conn.execute(
     'INSERT INTO water (user_id, date, count) VALUES (?, ?, ?)',
@@ -363,16 +464,63 @@ async def chat(message:Message):
         await conn.commit()
     await message.answer(text = l.printer(message.from_user.id, 'cup'), reply_markup=kb.keyboard(message.from_user.id, 'main_menu'))
 
+@dp.message(REG.grams1)
+async def grams1(message:Message, state: FSMContext):
+    await state.update_data(grams1=message.text)
+    data = await state.get_data()
+    gram = data['grams1'].split(",")[0]
+    name_a =  data['food_list']
+    cursor.execute(f"SELECT lang FROM user_lang WHERE user_id = {message.from_user.id}",
+                   )
+    ll = cursor.fetchone()[0]
+    translator = Translator(from_lang="ru", to_lang=ll)
+    print(name_a, data, gram)
+    for m in range(len(name_a)):
+        with open('products.json') as f:
+            file_content = f.read()
+            foods = json.loads(file_content)
+            for i in range(len(foods)):
+                if foods[i]["name"] == name_a[m].title():
+                    b = round(float(foods[i]["bgu"].split(',')[0]) * float(gram) / 100, 3)
+                    g = round(float(foods[i]["bgu"].split(',')[1]) * float(gram) / 100, 3)
+                    u = round(float(foods[i]["bgu"].split(',')[2]) * float(gram) / 100, 3)
+                    food_cal = float(foods[i]["kcal"]) * float(gram) / 100
+                    print(b, g, u, food_cal, translator.translate(name_a[m]))
+                    a = f"""INSERT INTO user_pit
+                            (
+                                user_id, 
+                                date, 
+                                user_name_of_food,
+                                b, g, u,
+                                food_cal
+                            )
+                            VALUES
+                            (
+                                {message.from_user.id}, 
+                                "{datetime.datetime.now().strftime('%Y-%m-%d')}",
+                                "{translator.translate(name_a[m])}",
+                                {b}, {g}, {u},
+                                {food_cal}
+                            )
+                        """
+                    cursor.execute(a)
+                    conn.commit()
+                    break
+
+
+    await message.answer(text=l.printer(message.from_user.id, "InfoInBase"), reply_markup=kb.keyboard(message.from_user.id, 'main_menu'))
+    await state.clear()
+
 @dp.message(REG.grams)
 async def grams(message:Message, state: FSMContext):
     await state.update_data(grams=message.text)
     data = await state.get_data()
     gram = data['grams'].split(",")
     name_a =  data['food_list']
-    cursor.execute(f"SELECT l FROM user_lang WHERE user_id = {message.from_user.id}",
+    cursor.execute(f"SELECT lang FROM user_lang WHERE user_id = {message.from_user.id}",
                    )
-    l = cursor.fetchone()[0]
-    translator = Translator(from_lang=l, to_lang="ru")
+    ll = cursor.fetchone()[0]
+    translator = Translator(from_lang=ll, to_lang="ru")
     print(name_a, data, gram)
     for m in range(len(name_a)):
         with open('products.json') as f:
@@ -383,40 +531,65 @@ async def grams(message:Message, state: FSMContext):
                     b = round(float(foods[i]["bgu"].split(',')[0]) * float(gram[m]) / 100, 3)
                     g = round(float(foods[i]["bgu"].split(',')[1]) * float(gram[m]) / 100, 3)
                     u = round(float(foods[i]["bgu"].split(',')[2]) * float(gram[m]) / 100, 3)
-                    food_cal =  float(foods[i]["kcal"]) * float(gram[m]) / 100
+                    food_cal = float(foods[i]["kcal"]) * float(gram[m]) / 100
                     print(b, g, u, food_cal)
-                    cursor.execute(
-                        'INSERT INTO user_pit (user_id, date, user_name_of_food, b, g, u, food_cal) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                        (message.from_user.id,datetime.datetime.now().strftime('%Y-%m-%d') , name_a[m], b, g, u, food_cal))
+                    a = f"""INSERT INTO user_pit
+                            (
+                                user_id, 
+                                date, 
+                                user_name_of_food,
+                                b, g, u,
+                                food_cal
+                            )
+                            VALUES
+                            (
+                                {message.from_user.id}, 
+                                "{datetime.datetime.now().strftime('%Y-%m-%d')}",
+                                "{name_a[m]}",
+                                {b}, {g}, {u},
+                                {food_cal}
+                            )
+                        """
+                    cursor.execute(a)
                     conn.commit()
-    await bot.send_message(message.chat.id, text=l.printer(message.from_user.id, 'InfoInBase'), reply_markup=kb.keyboard(message.from_user.id, 'main_menu'))
+                    break
+
+    await message.answer(text=l.printer(message.from_user.id, "InfoInBase"), reply_markup=kb.keyboard(message.from_user.id, 'main_menu'))
     await state.clear()
 
 
 
-@dp.message(F.text.in_({'Недельный план питания и тренировок' ,"Wöchentlicher Ernährungs- und Trainingsplan" ,"Plan hebdomadaire d'alimentation et d'entraînement" ,"Weekly diet and training plan" , 'Plan semanal de dieta y entrenamiento'}))
 
+@dp.message(F.text.in_({'Недельный план питания и тренировок' ,"Wöchentlicher Ernährungs- und Trainingsplan" ,"Plan semanal de nutrición y entrenamiento" ,"Weekly nutrition and exercise plan" , 'Plan semanal de dieta y entrenamiento'}))
 async def ai(message: Message, state: FSMContext):
     await message.answer( text=l.printer(message.from_user.id, 'InProcess'))
-
+    cursor.execute(
+        "SELECT lang FROM user_lang WHERE user_id = {}".format(message.from_user.id)
+    )
+    ll = cursor.fetchone()[0]
+    translator = Translator(from_lang=ll, to_lang='ru')
     cursor.execute(
         "SELECT user_aim, cal, user_sex, user_age, imt, user_weight, user_height FROM users WHERE date = ? AND user_id = ?",
         (datetime.datetime.now().strftime('%Y-%m-%d'), message.from_user.id)
     )
     aim, cal, sex, age, imt, weight, height = cursor.fetchone()
+    aim, cal, sex, age, imt, weight, height = translator.translate(aim), cal,translator.translate(sex), age, imt,weight, height
     zap_pit=  f"Придумай индивидуальный план разнообразного питания на неделю для {sex},чей рост равен {height}, возраст равен {age}, имт равен {imt} и цель {aim}"
     plan_pit= await generate(message, zap_pit)
     zap_tren= f"Придумай индивидуальный план тренировок на неделю для {sex}, чей рост равен {height}, возраст равен {age},  чей имт равен {imt} , чья цель {aim} и чей индивидуальный план питания {plan_pit}"
     plan_train = await generate(message, zap_tren)
+
     try:
         if plan_pit and plan_train:
             # Разделяем длинные сообщения на части
-            for part in split_message(plan_pit):
-                await bot.send_message(message.chat.id, text=part)
-            for part in split_message(plan_train):
-                await bot.send_message(message.chat.id, text=part)
+            for part in split_message(plan_pit, message.from_user.id):
+                await message.answer(part)
+
+            for part in split_message(plan_train, message.from_user.id):
+                await message.answer(part)
+
             await message.answer(
-                text=l.printer(message.from_user.id, 'recommendd'),
+                text=l.printer(message.from_user.id, 'recommend'),
                 reply_markup=kb.keyboard(message.from_user.id, 'main_menu'))
 
         else:
@@ -426,24 +599,28 @@ async def ai(message: Message, state: FSMContext):
         return f"Ошибка при генерации плана: {e}"
 
 
-@dp.message(F.text.in_({'Помочь с рецептом', "Ayuda con una receta" ,"Hilfe bei einem Rezept" ,"Aide pour une recette", 'Help with a recipe'}))
-
+@dp.message(F.text.in_({'Помочь с рецептом', "Ayuda con una receta" ,"Hilfe bei einem Rezept" ,"Aide pour une recette", 'Help with the recipe'}))
 async def ai_food(message: Message, state: FSMContext):
-    await message.answer(text = l.printer(message.from_user.first_name, 'choosemeal'), reply_markup=kb.keyboard(message.from_user.id, 'meals'))
+    await message.answer(text = l.printer(message.from_user.id, 'choosemeal'), reply_markup=kb.keyboard(message.from_user.id, 'meals'))
     await state.set_state(REG.food_meals)
 
 @dp.message(REG.food_meals)
 async def ai_food_meals(message: Message, state: FSMContext):
     await state.update_data(food_meals=message.text)
     data = await state.get_data()
-    meal = data['food_meals']
-    zap = f"Придумай новый рецепт {meal} с рекомендациями по готовке"
-    await message.answer( text='Подожди пару секунд, нейросеть генерирует ответ)')
+    cursor.execute(f"SELECT lang FROM user_lang WHERE user_id = {message.from_user.id}",
+                   )
+
+    ll = cursor.fetchone()[0]
+    translator = Translator(from_lang=ll, to_lang="ru")
+    meal = translator.translate(data['food_meals'])
+    zap = f"Придумай новый рецепт на {meal} с рекомендациями по готовке"
+    await message.answer( text=l.printer(message.from_user.id, 'InProcess'))
     plan_pit= await generate(message, zap)
     try:
         if plan_pit:
             # Разделяем длинные сообщения на части
-            for part in split_message(plan_pit):
+            for part in split_message(plan_pit, message.from_user.id):
                 await bot.send_message(message.chat.id, text=part, reply_markup=kb.keyboard(message.from_user.id, 'main_menu'))
         else:
             await bot.send_message(message.chat.id, text="Не удалось получить данные пользователя.",
@@ -454,8 +631,7 @@ async def ai_food_meals(message: Message, state: FSMContext):
     await state.clear()
 
 
-@dp.message(F.text.in_({ 'Помочь с тренировкой',"Help with the training", "Aide à la formation" ,"Hilfe bei der Ausbildung" , "Ayuda a la formación"}))
-
+@dp.message(F.text.in_({ 'Помочь с тренировкой',"Help with training", "Aide à la formation" ,"Hilfe bei der Ausbildung" , "Ayuda a la formación"}))
 async def ai_food(message: Message, state: FSMContext):
     await message.answer(text = l.printer(message.from_user.id, 'trenchoose'), reply_markup=kb.keyboard(message.from_user.id, 'tren_type'))
     await state.set_state(REG.train)
@@ -464,18 +640,24 @@ async def ai_food(message: Message, state: FSMContext):
 async def train(message: Message, state: FSMContext):
     await state.update_data(train=message.text)
     data = await state.get_data()
-    type_tren = data['train']
+    cursor.execute(f"SELECT lang FROM user_lang WHERE user_id = {message.from_user.id}",
+                   )
+
+    ll = cursor.fetchone()[0]
+    translator = Translator(from_lang=ll, to_lang="ru")
+    type_tren = translator.translate(data['train'])
     await state.clear()
+    await message.answer( text=l.printer(message.from_user.id, 'InProcess'))
     cursor.execute("SELECT imt FROM users WHERE date = ? AND user_id = ?",
                    (datetime.datetime.now().strftime('%Y-%m-%d'), message.from_user.id))
     imt = float(cursor.fetchone()[-1])
     zap = f"Придумай {type_tren} тренировку с рекомендациями для человека с ИМТ равным {imt}"
-    await message.answer( text='Подожди пару секунд, нейросеть генерирует ответ)')
     tren = await generate(message, zap)
+
     try:
         if tren:
             # Разделяем длинные сообщения на части
-            for part in split_message(tren):
+            for part in split_message(tren, message.from_user.id):
                 await bot.send_message(message.chat.id, text=part, reply_markup=kb.keyboard(message.from_user.id, 'tren_choise'))
                 await state.set_state(REG.tren_choiser)
 
@@ -505,6 +687,10 @@ async def ais(message: Message, state: FSMContext):
 async def leng2(message: Message, state: FSMContext):
     await state.set_state(REG.leng2)
     await message.answer(text = 'Please, chose your lenguage:', reply_markup=kb.keyboard(message.from_user.id, 'lenguage'))
+
+
+
+
 
 @dp.message(REG.leng2)
 async def start2(message: Message, state: FSMContext):
